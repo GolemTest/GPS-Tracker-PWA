@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS Tracker PWA</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2563eb">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #2563eb;
+            color: white;
+            padding: 16px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .btn-start {
+            background: #22c55e;
+            color: white;
+        }
+
+        .btn-start:hover {
+            background: #16a34a;
+        }
+
+        .btn-stop {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-stop:hover {
+            background: #dc2626;
+        }
+
+        .indicators {
+            background: white;
+            border-bottom: 1px solid #e5e7eb;
+            padding: 12px 16px;
+        }
+
+        .indicators-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            gap: 16px;
+            font-size: 14px;
+        }
+
+        .indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .status-active {
+            background: #22c55e;
+        }
+
+        .status-inactive {
+            background: #d1d5db;
+        }
+
+        .geofence-indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 2px solid #d1d5db;
+        }
+
+        .geofence-inside {
+            border-color: #f97316;
+            background: #fed7aa;
+        }
+
+        .error-message {
+            background: #fee2e2;
+            border: 1px solid #fca5a5;
+            color: #991b1b;
+            padding: 12px 16px;
+            margin: 16px;
+            border-radius: 8px;
+        }
+
+        #map {
+            flex: 1;
+            width: 100%;
+        }
+
+        .icon-nav {
+            width: 24px;
+            height: 24px;
+        }
+
+        .icon-btn {
+            width: 20px;
+            height: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <div class="header-title">
+                <svg class="icon-nav" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+                </svg>
+                <span>GPS Tracker PWA</span>
+            </div>
+            <button id="toggleBtn" class="btn btn-start">
+                <svg class="icon-btn" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z"/>
+                </svg>
+                <span>Démarrer</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="indicators">
+        <div class="indicators-content">
+            <div class="indicator">
+                <div id="statusDot" class="status-dot status-inactive"></div>
+                <span id="statusText">Suivi inactif</span>
+            </div>
+            <div class="indicator">
+                <div id="geofenceIndicator" class="geofence-indicator"></div>
+                <span id="geofenceText">Hors zone</span>
+            </div>
+            <div class="indicator">
+                <span id="pointsText">Points: 0</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="errorContainer"></div>
+    <div id="map"></div>
+
+    <audio id="audioPlayer" preload="auto">
+        <source src="audiotest.mp3" type="audio/mpeg">
+    </audio>
+
+    <script>
+        // Configuration
+        const geofence = {
+            center: [50.6372, 3.0635], // Lambersart, France
+            radius: 500 // 500 mètres
+        };
+
+        // État de l'application
+        let map = null;
+        let marker = null;
+        let polyline = null;
+        let geofenceCircle = null;
+        let tracking = false;
+        let watchId = null;
+        let path = [];
+        let insideGeofence = false;
+
+        // Éléments DOM
+        const toggleBtn = document.getElementById('toggleBtn');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const geofenceIndicator = document.getElementById('geofenceIndicator');
+        const geofenceText = document.getElementById('geofenceText');
+        const pointsText = document.getElementById('pointsText');
+        const errorContainer = document.getElementById('errorContainer');
+        const audioPlayer = document.getElementById('audioPlayer');
+
+        // Initialiser la carte
+        function initMap() {
+            map = L.map('map').setView(geofence.center, 15);
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            }).addTo(map);
+
+            // Ajouter la géofence
+            geofenceCircle = L.circle(geofence.center, {
+                color: 'orange',
+                fillColor: 'orange',
+                fillOpacity: 0.2,
+                radius: geofence.radius
+            }).addTo(map);
+
+            // Initialiser la polyligne
+            polyline = L.polyline([], {
+                color: 'blue',
+                weight: 4,
+                opacity: 0.7
+            }).addTo(map);
+        }
+
+        // Calculer la distance entre deux points (Haversine)
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3;
+            const φ1 = lat1 * Math.PI / 180;
+            const φ2 = lat2 * Math.PI / 180;
+            const Δφ = (lat2 - lat1) * Math.PI / 180;
+            const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+            return R * c;
+        }
+
+        // Vérifier si dans la géofence
+        function checkGeofence(lat, lng) {
+            const distance = calculateDistance(
+                lat, lng,
+                geofence.center[0], geofence.center[1]
+            );
+            return distance <= geofence.radius;
+        }
+
+        // Jouer le son
+        function playSound() {
+            audioPlayer.play().catch(err => {
+                console.error('Erreur lecture audio:', err);
+            });
+        }
+
+        // Afficher une erreur
+        function showError(message) {
+            errorContainer.innerHTML = `<div class="error-message">${message}</div>`;
+        }
+
+        // Effacer l'erreur
+        function clearError() {
+            errorContainer.innerHTML = '';
+        }
+
+        // Mettre à jour la position
+        function updatePosition(position) {
+            const { latitude, longitude } = position.coords;
+            const latLng = [latitude, longitude];
+
+            // Ajouter au chemin
+            path.push(latLng);
+            polyline.setLatLngs(path);
+
+            // Mettre à jour ou créer le marqueur
+            if (marker) {
+                marker.setLatLng(latLng);
+            } else {
+                marker = L.marker(latLng).addTo(map);
+            }
+
+            // Centrer la carte
+            map.setView(latLng);
+
+            // Vérifier la géofence
+            const isInside = checkGeofence(latitude, longitude);
+            if (isInside && !insideGeofence) {
+                playSound();
+                geofenceIndicator.classList.add('geofence-inside');
+                geofenceText.textContent = 'Dans la zone';
+            } else if (!isInside && insideGeofence) {
+                playSound();
+                geofenceIndicator.classList.remove('geofence-inside');
+                geofenceText.textContent = 'Hors zone';
+            }
+            insideGeofence = isInside;
+
+            // Mettre à jour le compteur
+            pointsText.textContent = `Points: ${path.length}`;
+        }
+
+        // Gérer les erreurs de géolocalisation
+        function handleError(error) {
+            let message = 'Erreur de géolocalisation: ';
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    message += 'Permission refusée';
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    message += 'Position indisponible';
+                    break;
+                case error.TIMEOUT:
+                    message += 'Timeout';
+                    break;
+                default:
+                    message += 'Erreur inconnue';
+            }
+            showError(message);
+        }
+
+        // Démarrer le suivi
+        function startTracking() {
+            if (!navigator.geolocation) {
+                showError('La géolocalisation n\'est pas supportée');
+                return;
+            }
+
+            clearError();
+            tracking = true;
+            path = [];
+            
+            // Mettre à jour l'UI
+            statusDot.classList.remove('status-inactive');
+            statusDot.classList.add('status-active');
+            statusText.textContent = 'Suivi actif';
+            
+            toggleBtn.classList.remove('btn-start');
+            toggleBtn.classList.add('btn-stop');
+            toggleBtn.innerHTML = `
+                <svg class="icon-btn" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+                </svg>
+                <span>Arrêter</span>
+            `;
+
+            // Démarrer la surveillance GPS
+            const options = {
+                enableHighAccuracy: true,
+                timeout: 5000,
+                maximumAge: 0
+            };
+
+            watchId = navigator.geolocation.watchPosition(
+                updatePosition,
+                handleError,
+                options
+            );
+        }
+
+        // Arrêter le suivi
+        function stopTracking() {
+            tracking = false;
+            
+            if (watchId) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+
+            // Mettre à jour l'UI
+            statusDot.classList.remove('status-active');
+            statusDot.classList.add('status-inactive');
+            statusText.textContent = 'Suivi inactif';
+            
+            toggleBtn.classList.remove('btn-stop');
+            toggleBtn.classList.add('btn-start');
+            toggleBtn.innerHTML = `
+                <svg class="icon-btn" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z"/>
+                </svg>
+                <span>Démarrer</span>
+            `;
+        }
+
+        // Basculer le suivi
+        toggleBtn.addEventListener('click', () => {
+            if (tracking) {
+                stopTracking();
+            } else {
+                startTracking();
+            }
+        });
+
+        // Initialiser au chargement
+        window.addEventListener('load', () => {
+            initMap();
+            
+            // Enregistrer le Service Worker
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('./service-worker.js')
+                    .then((registration) => {
+                        console.log('Service Worker enregistré avec succès:', registration.scope);
+                    })
+                    .catch((error) => {
+                        console.error('Échec de l\'enregistrement du Service Worker:', error);
+                    });
+            }
+        });
+    </script>
+</body>
+</html>
